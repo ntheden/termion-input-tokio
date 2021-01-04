@@ -2,6 +2,7 @@
 name = "termion-tokio"
 version = "0.1.0"
 authors = ["Kayo Phoenix <kayo@illumium.org>"]
+edition = "2018"
 
 [dependencies]
 bytes = "0.6.0"
@@ -9,3 +10,6 @@ futures = "0.3.8"
 tokio = "0.3.0"
 termion = "1"
 tokio-util = { version = "0.5.1", features = ["codec"] }
+
+[dev-dependencies]
+tokio = { version = "0.3.0", features = ["macros", "rt-multi-thread", "io-std", "time"] }
