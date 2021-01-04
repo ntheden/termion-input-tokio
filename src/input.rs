@@ -1,5 +1,8 @@
-use std::iter::empty;
 use std::{future, io, pin::Pin};
+use std::{
+    iter::empty,
+    task::{Context, Poll},
+};
 
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Stream, StreamExt};
@@ -71,31 +74,45 @@ where
         .map(|e| (e, buf))
 }
 
+// A type-erased stream of input objects.
+pub struct InputStream<T>(Pin<Box<dyn Stream<Item = Result<T, io::Error>> + Send>>);
+
+impl<T> InputStream<T> {
+    fn new<S: Stream<Item = Result<T, io::Error>> + Send + 'static>(stream: S) -> Self {
+        InputStream(Box::pin(stream))
+    }
+}
+
+impl<T> Stream for InputStream<T> {
+    type Item = Result<T, io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.0.poll_next_unpin(cx)
+    }
+}
+
 /// Extension to `Read` trait.
 pub trait TermReadAsync: Sized {
-    type EventsStream: Stream<Item = Result<Event, io::Error>>;
-    type KeysStream: Stream<Item = Result<Key, io::Error>>;
-
     /// An iterator over input events.
-    fn events_stream(self) -> Self::EventsStream;
+    fn events_stream(self) -> InputStream<Event>;
 
     /// An iterator over key inputs.
-    fn keys_stream(self) -> Self::KeysStream;
+    fn keys_stream(self) -> InputStream<Key>;
 }
 
 impl<R: 'static + Send + AsyncRead + TermReadAsyncEventsAndRaw> TermReadAsync for R {
-    type EventsStream = Pin<Box<dyn Stream<Item = Result<Event, io::Error>> + Send>>;
-    type KeysStream = Pin<Box<dyn Stream<Item = Result<Key, io::Error>> + Send>>;
-
-    fn events_stream(self) -> Self::EventsStream {
-        Box::pin(
+    fn events_stream(self) -> InputStream<Event> {
+        InputStream::new(
             self.events_and_raw_stream()
-                .map(|event_and_raw| event_and_raw.map(|(event, _raw)| event)),
+                .map(|event_and_raw| match event_and_raw {
+                    Ok((event, _raw)) => Ok(event),
+                    Err(e) => Err(e),
+                }),
         )
     }
 
-    fn keys_stream(self) -> Self::KeysStream {
-        Box::pin(self.events_stream().filter_map(|event| {
+    fn keys_stream(self) -> InputStream<Key> {
+        InputStream::new(self.events_stream().filter_map(|event| {
             future::ready(match event {
                 Ok(Event::Key(k)) => Some(Ok(k)),
                 Ok(_) => None,
