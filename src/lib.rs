@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::{Buf, Bytes, BytesMut};
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream::BoxStream};
 use termion::event::{self, Event, Key};
 use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, FramedRead};
@@ -75,7 +75,7 @@ where
 }
 
 // A type-erased stream of input events
-pub struct InputStream<T>(Pin<Box<dyn Stream<Item = Result<T, io::Error>> + Send>>);
+pub struct InputStream<T>(BoxStream<'static, Result<T, io::Error>>);
 
 impl<T> InputStream<T> {
     fn new<S: Stream<Item = Result<T, io::Error>> + Send + 'static>(stream: S) -> Self {
