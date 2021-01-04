@@ -1,52 +1,11 @@
-use std::io::{self, Write};
 use std::iter::empty;
-use std::mem::replace;
+use std::{future, io, pin::Pin};
 
-use bytes::{Buf, BytesMut, IntoBuf};
-use futures::{Async, Future, Poll, Stream};
-use tokio::{
-    codec::{Decoder, FramedRead},
-    io::AsyncRead,
-};
-
+use bytes::{Buf, Bytes, BytesMut};
+use futures::{Stream, StreamExt};
 use termion::event::{self, Event, Key};
-use termion::raw::IntoRawMode;
-
-/// A stream of input keys.
-pub struct KeysStream<R> {
-    inner: EventsStream<R>,
-}
-
-impl<R: AsyncRead> Stream for KeysStream<R> {
-    type Item = Key;
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        use self::Async::*;
-        self.inner.poll().map(|async| match async {
-            Ready(Some(Event::Key(k))) => Ready(Some(k)),
-            Ready(Some(_)) => NotReady,
-            Ready(None) => Ready(None),
-            NotReady => NotReady,
-        })
-    }
-}
-
-/// An iterator over input events.
-pub struct EventsStream<R> {
-    inner: EventsAndRawStream<R>,
-}
-
-impl<R: AsyncRead> Stream for EventsStream<R> {
-    type Item = Event;
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.inner
-            .poll()
-            .map(|async| async.map(|option| option.map(|(event, _raw)| event)))
-    }
-}
+use tokio::io::AsyncRead;
+use tokio_util::codec::{Decoder, FramedRead};
 
 /// An iterator over input events and the bytes that define them
 type EventsAndRawStream<R> = FramedRead<R, EventsAndRawDecoder>;
@@ -76,8 +35,8 @@ impl Decoder for EventsAndRawDecoder {
             },
             _ => {
                 let (off, res) = if let Some((c, cs)) = src.split_first() {
-                    let cur = cs.into_buf();
-                    let mut it = cur.iter().map(Ok);
+                    let cur = Bytes::copy_from_slice(cs);
+                    let mut it = cur.into_iter().map(Ok);
                     if let Ok(res) = parse_event(*c, &mut it) {
                         (1 + cs.len() - it.len(), Ok(Some(res)))
                     } else {
@@ -112,114 +71,37 @@ where
         .map(|e| (e, buf))
 }
 
-enum ReadLineState<R> {
-    Error(io::Error),
-    Read(Vec<u8>, R),
-    Done,
-}
-
-pub struct ReadLineFuture<R>(ReadLineState<R>);
-
-impl<R> From<io::Error> for ReadLineFuture<R> {
-    fn from(error: io::Error) -> Self {
-        ReadLineFuture(ReadLineState::Error(error))
-    }
-}
-
-impl<R> ReadLineFuture<R> {
-    fn new(source: R) -> Self {
-        ReadLineFuture(ReadLineState::Read(Vec::with_capacity(30), source))
-    }
-}
-
-impl<R: AsyncRead> Future for ReadLineFuture<R> {
-    type Item = (Option<String>, R);
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        use self::ReadLineState::*;
-        match replace(&mut self.0, Done) {
-            Error(error) => Err(error),
-            Read(mut buf, mut input) => {
-                use self::Async::*;
-
-                let mut byte = [0x8, 1];
-
-                match input.poll_read(&mut byte) {
-                    Ok(Ready(1)) => match byte[0] {
-                        0 | 3 | 4 => return Ok(Ready((None, input))),
-                        0x7f => {
-                            buf.pop();
-                        }
-                        b'\n' | b'\r' => {
-                            let string = try!(
-                                String::from_utf8(buf)
-                                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-                            );
-                            return Ok(Ready((Some(string), input)));
-                        }
-                        c => {
-                            buf.push(c);
-                        }
-                    },
-                    Ok(Ready(_)) => (),
-                    Ok(NotReady) => (),
-                    Err(e) => return Err(e),
-                }
-
-                self.0 = Read(buf, input);
-                Ok(NotReady)
-            }
-            Done => unreachable!(),
-        }
-    }
-}
-
 /// Extension to `Read` trait.
 pub trait TermReadAsync: Sized {
+    type EventsStream: Stream<Item = Result<Event, io::Error>>;
+    type KeysStream: Stream<Item = Result<Key, io::Error>>;
+
     /// An iterator over input events.
-    fn events_stream(self) -> EventsStream<Self>
-    where
-        Self: Sized;
+    fn events_stream(self) -> Self::EventsStream;
 
     /// An iterator over key inputs.
-    fn keys_stream(self) -> KeysStream<Self>
-    where
-        Self: Sized;
-
-    /// Read a line.
-    ///
-    /// EOT and ETX will abort the prompt, returning `None`. Newline or carriage return will
-    /// complete the input.
-    fn read_line_future(self) -> ReadLineFuture<Self>;
-
-    /// Read a password.
-    ///
-    /// EOT and ETX will abort the prompt, returning `None`. Newline or carriage return will
-    /// complete the input.
-    fn read_passwd_future<W: Write>(self, writer: &mut W) -> ReadLineFuture<Self> {
-        if let Err(error) = writer.into_raw_mode() {
-            error.into()
-        } else {
-            self.read_line_future()
-        }
-    }
+    fn keys_stream(self) -> Self::KeysStream;
 }
 
-impl<R: AsyncRead + TermReadAsyncEventsAndRaw> TermReadAsync for R {
-    fn events_stream(self) -> EventsStream<Self> {
-        EventsStream {
-            inner: self.events_and_raw_stream(),
-        }
-    }
-    fn keys_stream(self) -> KeysStream<Self> {
-        KeysStream {
-            inner: self.events_stream(),
-        }
+impl<R: 'static + Send + AsyncRead + TermReadAsyncEventsAndRaw> TermReadAsync for R {
+    type EventsStream = Pin<Box<dyn Stream<Item = Result<Event, io::Error>> + Send>>;
+    type KeysStream = Pin<Box<dyn Stream<Item = Result<Key, io::Error>> + Send>>;
+
+    fn events_stream(self) -> Self::EventsStream {
+        Box::pin(
+            self.events_and_raw_stream()
+                .map(|event_and_raw| event_and_raw.map(|(event, _raw)| event)),
+        )
     }
 
-    fn read_line_future(self) -> ReadLineFuture<Self> {
-        ReadLineFuture::new(self)
+    fn keys_stream(self) -> Self::KeysStream {
+        Box::pin(self.events_stream().filter_map(|event| {
+            future::ready(match event {
+                Ok(Event::Key(k)) => Some(Ok(k)),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            })
+        }))
     }
 }
 
