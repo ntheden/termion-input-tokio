@@ -74,7 +74,7 @@ where
         .map(|e| (e, buf))
 }
 
-// A type-erased stream of input objects.
+// A type-erased stream of input events
 pub struct InputStream<T>(Pin<Box<dyn Stream<Item = Result<T, io::Error>> + Send>>);
 
 impl<T> InputStream<T> {
@@ -91,16 +91,21 @@ impl<T> Stream for InputStream<T> {
     }
 }
 
-/// Extension to `Read` trait.
+/// Extension to `Read` trait that provides streams derived from input events.
 pub trait TermReadAsync: Sized {
     /// An iterator over input events.
     fn events_stream(self) -> InputStream<Event>;
 
     /// An iterator over key inputs.
     fn keys_stream(self) -> InputStream<Key>;
+
+    /// An iterator over input events and the bytes that define them.
+    fn events_and_raw_stream(self) -> EventsAndRawStream<Self>
+    where
+        Self: Sized;
 }
 
-impl<R: 'static + Send + AsyncRead + TermReadAsyncEventsAndRaw> TermReadAsync for R {
+impl<R: 'static + Send + AsyncRead> TermReadAsync for R {
     fn events_stream(self) -> InputStream<Event> {
         InputStream::new(
             self.events_and_raw_stream()
@@ -120,17 +125,7 @@ impl<R: 'static + Send + AsyncRead + TermReadAsyncEventsAndRaw> TermReadAsync fo
             })
         }))
     }
-}
 
-/// Extension to `TermReadAsync` trait. A separate trait in order to maintain backwards compatibility.
-pub trait TermReadAsyncEventsAndRaw {
-    /// An iterator over input events and the bytes that define them.
-    fn events_and_raw_stream(self) -> EventsAndRawStream<Self>
-    where
-        Self: Sized;
-}
-
-impl<R: AsyncRead> TermReadAsyncEventsAndRaw for R {
     fn events_and_raw_stream(self) -> EventsAndRawStream<Self> {
         FramedRead::new(self, EventsAndRawDecoder)
     }
