@@ -1,8 +1,14 @@
 [package]
 name = "termion-input-tokio"
+description = "An adapter that exposes termion's input and key event iterators as asynchronous streams."
 version = "0.2.0"
 authors = ["Mark Rowe <mrowe@bdash.net.nz>", "Kayo Phoenix <kayo@illumium.org>"]
+repository = "http://github.com/bdash/termion-input-tokio"
 edition = "2018"
+license = "MIT"
+keywords = ["tty", "terminal", "tui", "termion", "tokio"]
+categories = ["asynchronous", "command-line-interface"]
+exclude = ["target", "CHANGELOG.md", "Cargo.lock"]
 
 [dependencies]
 bytes = "0.6.0"
