@@ -7,7 +7,7 @@ use futures::{future::Either, StreamExt};
 use tokio::{io::stdin, time::interval};
 
 use termion::{event::Key, raw::IntoRawMode};
-use termion_tokio::input::TermReadAsync;
+use termion_input_tokio::TermReadAsync;
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {

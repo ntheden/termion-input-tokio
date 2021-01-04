@@ -1,7 +1,7 @@
 [package]
-name = "termion-tokio"
-version = "0.1.0"
-authors = ["Kayo Phoenix <kayo@illumium.org>"]
+name = "termion-input-tokio"
+version = "0.2.0"
+authors = ["Mark Rowe <mrowe@bdash.net.nz>", "Kayo Phoenix <kayo@illumium.org>"]
 edition = "2018"
 
 [dependencies]
