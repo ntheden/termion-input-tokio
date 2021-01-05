@@ -4,7 +4,7 @@ An adapter that exposes termion's input and key event iterators as asynchronous 
 
 ## Compatiblity
 
-Compatible with Tokio v0.3.x.
+Compatible with Tokio v1.0.
 
 ## Usage
 

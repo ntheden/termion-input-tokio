@@ -8,13 +8,14 @@ use tokio::{io::stdin, time::interval};
 
 use termion::{event::Key, raw::IntoRawMode};
 use termion_input_tokio::TermReadAsync;
+use tokio_stream::wrappers::IntervalStream;
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     let raw_term = stdout().into_raw_mode()?;
 
     let input = stdin().keys_stream().map(Either::Right);
-    let ticks = interval(Duration::from_secs(3)).map(Either::Left);
+    let ticks = IntervalStream::new(interval(Duration::from_secs(3))).map(Either::Left);
 
     let events = futures::stream::select(ticks, input);
 
