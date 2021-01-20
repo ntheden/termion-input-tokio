@@ -40,7 +40,7 @@ async fn main() -> Result<(), std::io::Error> {
 
 ## Non-blocking Input
 
-Reading from [tokio::io::stdin()](https://docs.rs/tokio/latest/tokio/io/fn.stdin.html) is still blocking operation. This can be problematic if you wish to gracefully tear down the input event stream as there's no way to interrupt an in-progress `read` system call. To address this you can use [tokio-fd](https://github.com/nanpuyue/tokio-fd)'s `AsyncFd` to wrap `stdin`. This will result in tokio polling `stdin` for readability, as it would a socket. It will then only attempt to read from `stdin` when the kernel indicates that data is available, avoiding blocking `read` calls and allowing you to cleanly tear down your input event stream.
+It is challenging to use true non-blocking reads with `stdin`. In the common case both `stdin` and `stdout` refer to the same file, typically a PTY. Since non-blocking mode is a per-file property, rather than a per-file-descriptor one, using `fcntl` with `O_NONBLOCK` to change `stdin` into non-blocking mode will also make `stdout` non-blocking. Since most code is not prepared to deal with `EWOULDBLOCK` when writing to `stdout`, asynchronous reads from `stdin` are typically typically performed using blocking operations on a secondary thread. This is how `AsyncRead` for [tokio::io::stdin()](https://docs.rs/tokio/latest/tokio/io/fn.stdin.html) is implemented.
 
 ## Credits
 
